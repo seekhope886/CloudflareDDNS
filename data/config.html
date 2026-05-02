@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DDNS 狀態 | ESP32 服務</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .status-main { padding: 2rem 0; }
+    .ip-card {
+      background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
+      border: 1px solid var(--accent-cyan-dim);
+      border-radius: 20px;
+      padding: 3rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .ip-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle, var(--accent-cyan-dim) 0%, transparent 50%);
+      animation: rotate 10s linear infinite;
+    }
+    @keyframes rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .ip-card .label {
+      position: relative;
+      font-size: 1rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 2px;
+    }
+    .ip-card .ip {
+      position: relative;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 3.5rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin: 1rem 0;
+      text-shadow: 0 0 40px var(--accent-cyan-dim);
+    }
+    .ip-card .domain {
+      position: relative;
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+    }
+    .refresh-btn {
+      position: relative;
+      margin-top: 1.5rem;
+    }
+    .loading {
+      display: none;
+      position: relative;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--border-color);
+      border-top-color: var(--accent-cyan);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .toast {
+      position: fixed;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      padding: 1rem 2rem;
+      border-radius: 12px;
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 1000;
+    }
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+      opacity: 1;
+    }
+    .toast.success { border-color: var(--accent-green); }
+    .toast.error { border-color: var(--accent-red); }
+    .config-section {
+      margin-top: 3rem;
+    }
+    .config-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .config-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 0;
+      border-bottom: 1px solid var(--border-color);
+    }
+    .config-row:last-child { border-bottom: none; }
+    .config-label {
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+    .config-value {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+      </div>
+      <span>ESP32 DDNS</span>
+    </div>
+    <nav>
+      <a href="/">MQTT 教學</a>
+      <a href="/status" class="active">狀態</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="status-main">
+      <div class="ip-card">
+        <div class="label">目前公網 IP</div>
+        <div class="ip" id="currentIP">---.---.---.---</div>
+        <div class="domain" id="domain">seekhope.dpdns.org</div>
+        <div class="refresh-btn">
+          <button class="btn btn-primary" onclick="triggerUpdate()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+            立即更新
+          </button>
+          <div class="loading" id="loading"></div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 class="section-title">狀態資訊</h2>
+      <div class="status-grid">
+        <div class="status-card">
+          <div class="label">WiFi 狀態</div>
+          <div class="value" id="wifiStatus">
+            <span class="status-indicator warning">檢測中</span>
+          </div>
+        </div>
+        <div class="status-card">
+          <div class="label">最後更新</div>
+          <div class="value" id="lastUpdate">---</div>
+        </div>
+        <div class="status-card" id="updateStatusCard">
+          <div class="label">更新狀態</div>
+          <div class="value" id="updateStatus">
+            <span class="status-indicator warning">等待中</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="config-section">
+      <h2 class="section-title">API 配置</h2>
+      <div class="config-card">
+        <div class="config-row">
+          <span class="config-label">Domain</span>
+          <span class="config-value" id="configDomain">seekhope.dpdns.org</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">API Token</span>
+          <span class="config-value" id="configToken">未配置</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Zone ID</span>
+          <span class="config-value" id="configZone">未配置</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">Record ID</span>
+          <span class="config-value" id="configRecord">未配置</span>
+        </div>
+        <div class="config-row">
+          <span class="config-label">檢查間隔</span>
+          <span class="config-value">5 分鐘</span>
+        </div>
+      </div>
+      <p style="margin-top: 1rem; color: var(--text-muted); font-size: 0.85rem;">
+        * API 資料請在代碼中编輯 <code>main.ino</code> 填入
+      </p>
+    </section>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <footer>
+    <p>ESP32 C3 DDNS 項目 | 基于 FreeRTOS + AsyncWebServer</p>
+  </footer>
+
+  <script>
+    let isUpdating = false;
+
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = 'toast ' + type;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+
+    function formatTime(timestamp) {
+      if (!timestamp || timestamp === 0) return '尚未更新';
+      const date = new Date(timestamp);
+      return date.toLocaleString('zh-TW');
+    }
+
+    function formatRelativeTime(timestamp) {
+      if (!timestamp || timestamp === 0) return '尚未更新';
+      const diff = Date.now() - timestamp;
+      const minutes = Math.floor(diff / 60000);
+      if (minutes < 1) return '剛剛';
+      if (minutes < 60) return minutes + ' 分鐘前';
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return hours + ' 小時前';
+      return formatTime(timestamp);
+    }
+
+    async function fetchStatus() {
+      try {
+        const response = await fetch('/api/status');
+        const data = await response.json();
+
+        document.getElementById('currentIP').textContent = data.ip || '請求失敗';
+        document.getElementById('domain').textContent = data.domain || '---';
+        document.getElementById('lastUpdate').textContent = formatRelativeTime(data.lastUpdate);
+
+        const wifiEl = document.getElementById('wifiStatus');
+        if (data.wifiConnected) {
+          wifiEl.innerHTML = '<span class="status-indicator success">已連接</span>';
+        } else {
+          wifiEl.innerHTML = '<span class="status-indicator error">未連接</span>';
+        }
+
+        const updateEl = document.getElementById('updateStatus');
+        const updateCard = document.getElementById('updateStatusCard');
+        if (data.status) {
+          updateEl.innerHTML = '<span class="status-indicator success">更新成功</span>';
+          updateCard.className = 'status-card success';
+        } else {
+          updateEl.innerHTML = '<span class="status-indicator error">' + (data.message || '等待更新') + '</span>';
+          updateCard.className = 'status-card error';
+        }
+
+      } catch (e) {
+        console.error('索取狀態失敗:', e);
+        showToast('索取狀態失敗', 'error');
+      }
+    }
+
+    async function triggerUpdate() {
+      if (isUpdating) return;
+      isUpdating = true;
+
+      const btn = document.querySelector('.refresh-btn button');
+      const loading = document.getElementById('loading');
+      btn.style.display = 'none';
+      loading.style.display = 'inline-block';
+
+      try {
+        const response = await fetch('/api/update');
+        const data = await response.json();
+
+        if (data.status) {
+          showToast('DDNS 更新成功！', 'success');
+        } else {
+          showToast('更新失敗: ' + data.message, 'error');
+        }
+        await fetchStatus();
+      } catch (e) {
+        showToast('更新請求失敗', 'error');
+      } finally {
+        btn.style.display = 'inline-flex';
+        loading.style.display = 'none';
+        isUpdating = false;
+      }
+    }
+
+    fetchStatus();
+    setInterval(fetchStatus, 10000);
+  </script>
+
+</body>
+</html>
