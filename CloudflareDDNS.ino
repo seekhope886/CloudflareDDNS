@@ -3,6 +3,7 @@
 #include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <SPIFFS.h>
+#include <esp_task_wdt.h> // ESP32 引入watchdog
 
 // ===== 请在此填入您的 Cloudflare API 资讯 =====
 const char* CF_TOKEN = "";      // Cloudflare API Token
@@ -13,6 +14,8 @@ const char* CF_DOMAIN = "";
 
 #define DDNS_CHECK_INTERVAL 600000  // 10 分鐘
 #define SMART_CONFIG_TIMEOUT 60000 // 1 分鐘 SmartConfig 超時
+// 定義看門狗超時時間（單位：毫秒，例如 20000 毫秒 = 20 秒）
+#define WDT_TIMEOUT_MS 20000
 
 // 全局變數
 String currentWANIP = "";
@@ -304,9 +307,22 @@ void setup() {
     Serial.printf("[WiFi] 本地 IP: %s\n", WiFi.localIP().toString().c_str());
     startWebServer();
   }
+// 初始化看門狗
+  // 適用於 ESP32 Core 3.0.x 的新版看門狗初始化
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = WDT_TIMEOUT_MS,     // 設定超時時間 (毫秒)
+    .idle_core_mask = (1 << 0),       // 監控 Core 0 (ESP32-C3 是單核心)
+    .trigger_panic = true             // 超時後觸發重啟
+  };
+  
+  esp_task_wdt_init(&wdt_config);     // 傳入結構體指標
+  esp_task_wdt_add(NULL);             // 將目前的主執行緒（Loop Task）加入監控  
+
 }
 
 void loop() {
+  esp_task_wdt_reset();
+
   server.handleClient();
 
   unsigned long now = millis();
