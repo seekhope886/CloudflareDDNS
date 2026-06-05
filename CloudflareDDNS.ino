@@ -138,8 +138,15 @@ String getWANIP() {
   int httpCode = http.GET();
   String ip = "";
   if (httpCode == HTTP_CODE_OK) {
-    ip = http.getString();
-    ip.trim();
+    http.getStream().setTimeout(2);
+    char ipBuffer[16] = {0};
+    int bytesRead = http.getStream().readBytesUntil('\n', ipBuffer, sizeof(ipBuffer) - 1);
+    
+    if (bytesRead > 0) {
+      ip = String(ipBuffer);
+      ip.trim(); // 確保徹底清除可能殘留的 \r 或空白
+    }
+    
     Serial.println(ip);
   } else {
     Serial.printf("取得 IP 失敗，錯誤碼: %d\n", httpCode);
@@ -226,9 +233,11 @@ void handleRoot() {
     
   File file = SPIFFS.open("/index.html", "r");
   if (file) {
+    server.sendHeader("Connection", "close"); 
     server.streamFile(file, "text/html");
     file.close();
   } else {
+    server.sendHeader("Connection", "close"); 
     server.send(200, "text/plain", "index.html not found");
   }
 }
