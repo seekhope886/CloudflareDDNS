@@ -154,14 +154,16 @@ void updateCloudflareDDNS(String ip) {
     ddnsUpdateStatus = false;
     return;
   }
+  Serial.printf("\n[DDNS] 開始更新，目前 Heap 狀態: %d\n", ESP.getFreeHeap());
 
-  WiFiClientSecure client;
-  client.setInsecure();
-
+  WiFiClientSecure* client = new WiFiClientSecure();
   HTTPClient http;
-  String url = "https://api.cloudflare.com/client/v4/zones/" + String(CF_ZONE_ID) + "/dns_records/" + String(CF_RECORD_ID);
 
-  http.begin(client, url);
+  client->setInsecure();
+
+  String url = "https://api.cloudflare.com/client/v4/zones/" + String(CF_ZONE_ID) + "/dns_records/" + String(CF_RECORD_ID);
+  http.begin(*client, url);
+
   http.addHeader("Authorization", "Bearer " + String(CF_TOKEN));
   http.addHeader("Content-Type", "application/json");
 
@@ -170,21 +172,23 @@ void updateCloudflareDDNS(String ip) {
   int httpResponseCode = http.PUT(payload);
 
   if (httpResponseCode > 0) {
-    String response = http.getString();
-    if (response.indexOf("\"success\":true") != -1) {
+    if (http.getStream().find("\"success\":true")) {
       ddnsStatusMessage = "更新成功: " + ip;
       ddnsUpdateStatus = true;
       Serial.println("[DDNS] 更新成功: " + ip);
     } else {
-      ddnsStatusMessage = "更新失败";
+      ddnsStatusMessage = "更新失敗";
       ddnsUpdateStatus = false;
-      Serial.println("[DDNS] 更新失敗: " + response);
+      Serial.printf("[DDNS] 更新失敗！HTTP 狀態碼: %d\n", httpResponseCode);
     }
   } else {
     ddnsStatusMessage = "HTTP 錯誤: " + String(httpResponseCode);
     ddnsUpdateStatus = false;
+    Serial.printf("[DDNS] 網路連線錯誤碼: %d\n", httpResponseCode);
   }
+  
   http.end();
+  delete client; 
 }
 
 void checkDDNS() {
